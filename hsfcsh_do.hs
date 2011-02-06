@@ -1,4 +1,3 @@
-#!/usr/bin/runhaskell
 module Main
 (
 main
@@ -10,29 +9,55 @@ import Network
 import System.IO
 import System.Process
 import System.Environment
+import System.Console.GetOpt
 import Control.Monad
 import Control.Exception
 import Control.Concurrent
 import Data.Maybe
 import Data.Char
 
+data Options = Options {
+  optHsfcsh :: String,
+  optPort :: PortNumber
+} deriving Show
+
+defaultOptions = Options {
+  optHsfcsh = "hsfcsh",
+  optPort = 1234
+}
+
+options :: [OptDescr (Options -> Options)]
+options = [
+  Option ['c'] ["with-hsfcsh"] (ReqArg (\o opts -> opts {optHsfcsh = o}) "CMD") "hsfcsh command",
+  Option ['p'] ["port"] (ReqArg (\o opts -> opts {optPort = fromIntegral $ read o}) "PORT") "port to cennect to"
+ ]
+
+parseOpts :: [String] -> IO (Options, [String])
+parseOpts argv =
+  case getOpt Permute options argv of
+    (o, n, []) -> return (foldl (flip id) defaultOptions o, n)
+    (_, _, errs) -> ioError (userError $ concat errs ++ usageInfo header options)
+
+header :: String
+header = "Usage: hsfcsh_do [OPTION...] (spawn | exit | compile \"ARGS\")"
+
 main :: IO ()
 main = withSocketsDo main'
 
 main' = do
   args <- getArgs
-  print args
+  (opts, args) <- parseOpts args
   case length args of
     1 -> case head args of
-           "spawn" -> spawn
+           "spawn" -> spawn (optHsfcsh opts)
            "exit" -> do
-                       h <- connect
+                       h <- connect (optPort opts)
                        let handle = fromJust h
-                       when (isJust h) $ hPutStrLn handle "q" >> hClose handle
-           _ -> return ()
+                       when (isJust h) $ hPutStrLn handle "q" >> hFlush handle >> hClose handle
+           _ -> putStrLn $ usageInfo header options
     2 -> case head args of
            "compile" -> do
-                       handle <- connectOrSpawn
+                       handle <- connectOrSpawn (optHsfcsh opts) (optPort opts)
                        let tgt = args!!1
                        id <- findId handle tgt
                        let id' = fromJust id
@@ -49,8 +74,8 @@ main' = do
                        hPutStrLn handle "n"
                        hFlush handle
                        hClose handle
-           _ -> return ()
-    _ -> return ()
+           _ -> putStrLn $ usageInfo header options
+    _ -> putStrLn $ usageInfo header options
 
 findId :: Handle -> String -> IO (Maybe Int)
 findId handle tgt = do
@@ -95,16 +120,16 @@ readRes' handle = lp []
       then return (reverse ls)
       else lp (l:ls)
 
-connectOrSpawn :: IO Handle
-connectOrSpawn = do
-  h <- connect
+connectOrSpawn :: String -> PortNumber -> IO Handle
+connectOrSpawn cmd port = do
+  h <- connect port
   if isNothing h
-    then spawn >> connect >>= return . fromJust
+    then spawn cmd >> connect port >>= return . fromJust
     else return $ fromJust h
 
-connect :: IO (Maybe Handle)
-connect = catch (fmap Just (connectTo "localhost" (PortNumber 1234))) (\e -> print (e :: SomeException) >> return Nothing)
+connect :: PortNumber -> IO (Maybe Handle)
+connect port = catch (fmap Just (connectTo "localhost" (PortNumber port))) (\e -> print (e :: SomeException) >> return Nothing)
 
-spawn :: IO ()
-spawn = runCommand "hsfcsh" >> yield >> threadDelay 2000000
+spawn :: String -> IO ()
+spawn cmd = runCommand cmd >> yield >> threadDelay 2000000
 

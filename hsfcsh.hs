@@ -1,4 +1,3 @@
-#!/usr/bin/runhaskell
 module Main
 (
 main
@@ -10,26 +9,61 @@ import Network
 import System.Exit
 import System.IO
 import System.Process
+import System.Environment
 import System.Posix.Daemonize
 import System.Log.Logger
 import System.Log.Handler.Syslog
+import System.Console.GetOpt
 import Control.Exception
 import Control.Monad
 import Control.Concurrent
 import Control.Concurrent.Chan
 import Data.Maybe
 
+data Options = Options {
+  optFcshCmd :: String,
+  optPort :: PortNumber,
+  optDaemonize :: Bool,
+  optSyslog :: Bool
+} deriving Show
+
+defaultOptions = Options {
+  optFcshCmd = "fcsh",
+  optPort = 1234,
+  optDaemonize = True,
+  optSyslog = True
+}
+
+options :: [OptDescr (Options -> Options)]
+options = [
+  Option ['c'] ["with-fcsh"] (ReqArg (\o opts -> opts {optFcshCmd = o}) "CMD") "fcsh command",
+  Option ['p'] ["port"] (ReqArg (\o opts -> opts {optPort = fromIntegral $ read o}) "PORT") "port to listen on",
+  Option ['f'] ["foreground"] (NoArg (\opts -> opts {optDaemonize = False})) "don't daemonize",
+  Option ['d'] ["daemonize"] (NoArg (\opts -> opts {optDaemonize = True})) "daemonize",
+  Option ['s'] ["silent"] (NoArg (\opts -> opts {optSyslog = False})) "don't log to the syslog",
+  Option ['v'] ["verbose"] (NoArg (\opts -> opts {optSyslog = True})) "log to the syslog"
+ ]
+
 log_ :: String
 log_ = "hsfcsh"
 
+parseOpts :: [String] -> IO (Options, [String])
+parseOpts argv =
+  case getOpt Permute options argv of
+    (o, n, []) -> return (foldl (flip id) defaultOptions o, n)
+    (_, _, errs) -> ioError (userError $ concat errs ++ usageInfo header options)
+  where
+  header = "Usage: hsfcsh [OPTION...]"
+
 main :: IO ()
 main = do
-  daemonize $ do
-  updateGlobalLogger rootLoggerName (setLevel DEBUG)
+  (opts, _) <- getArgs >>= parseOpts
+  (if optDaemonize opts then daemonize else id) $ do
+  updateGlobalLogger rootLoggerName (setLevel INFO)
   s <- openlog "hsfcsh" [PID] USER DEBUG
-  updateGlobalLogger rootLoggerName (setHandlers [s])
+  when (optSyslog opts) $ updateGlobalLogger rootLoggerName (setHandlers [s])
   infoM log_ "started"
-  fcsh <- runInteractiveCommand "fcsh"
+  fcsh <- runInteractiveCommand $ optFcshCmd opts
 
   threadId <- myThreadId
   chan <- newChan
@@ -38,7 +72,7 @@ main = do
 
   waitReady chan Nothing
 
-  withSocketsDo $ main' fcsh chan
+  withSocketsDo $ main' opts fcsh chan
   terminateProcess $ getPH fcsh
   infoM log_ "shutdown"
 
@@ -57,9 +91,9 @@ waitReady chan handle = waitReady' []
              then mPutStrLn handle "<FCSH END>"
              else waitReady' (c:cs)
 
-main' :: FCSH -> Chan Char -> IO ()
-main' fcsh chan = do
-  sock <- listenOn (PortNumber 1234)
+main' :: Options -> FCSH -> Chan Char -> IO ()
+main' opts fcsh chan = do
+  sock <- listenOn (PortNumber $ optPort opts)
   acceptLoop fcsh sock chan
   sClose sock
 
