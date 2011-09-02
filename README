@@ -1,0 +1,30 @@
+
+It is just a wrapper around fcsh. It allows to build flash/flex projects incrementally.
+It can be used from Makefile.
+
+The package contains two executables, hsfcsh and hsfcsh_do. The first one is daemon,
+hsfcsh_do allows to send commands to the daemon.
+
+
+Install
+
+- Install flex sdk and add <flex_sdk>/bin to your PATH
+- Install haskell platform, add ~/.cabal/bin to your PATH
+- `cabal install hsfcsh`
+
+
+Using
+
+Use `hsfcsh_do spawn` or `hsfcsh_do exit` to start or stop the daemon.
+Use `hsfcsh_do compile args` to compile something. It will spawn the daemon if it is not started yet.
+
+The next example will compile Start.mxml from the current directory:
+  hsfcsh_do compile -- "$(PWD)/Start.mxml"
+
+The first time it may take few minutes to compile for large projects, but then it will compile
+the project incrementally.
+
+You can use hsfcsh_do from Makefile. See example in the corresponding directory.
+It will redirect compiler output to the stdout, so you could examine the results (errors, warnings, etc)
+or let your editor (vim, emacs) to parse them.
+
